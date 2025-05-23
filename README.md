@@ -43,158 +43,221 @@ Dataset diambil dari [Goodbooks-10k GitHub](https://github.com/zygmuntz/goodbook
 
 ### Dataset 1: `books.csv`
 
-- Jumlah: 10.000 baris × 23 kolom
-- Kondisi: tidak ditemukan missing value
-- Fitur penting: `book_id`, `title`, `authors`, `average_rating`, `language_code`, `ratings_count`
+- Ukuran: **10.000 baris × 23 kolom**
+- Kondisi: Terdapat beberapa kolom dengan nilai null (seperti `isbn`, `isbn13`, `original_title`, dan `language_code`)
+
+### Fitur `books.csv`
+
+1. `book_id`: ID unik buku
+2. `goodreads_book_id`: ID buku di platform Goodreads
+3. `best_book_id`: ID terbaik dari versi buku
+4. `work_id`: ID karya
+5. `books_count`: Total versi buku yang tersedia
+6. `isbn`: ISBN
+7. `isbn13`: ISBN versi 13 digit
+8. `authors`: Nama penulis
+9. `original_publication_year`: Tahun terbit asli
+10. `original_title`: Judul asli
+11. `title`: Judul buku
+12. `language_code`: Kode bahasa buku
+13. `average_rating`: Rata-rata rating
+14. `ratings_count`: Jumlah total rating
+15. `work_ratings_count`: Jumlah rating berdasarkan ID karya
+16. `work_text_reviews_count`: Jumlah ulasan teks
+17. `ratings_1` s/d `ratings_5`: Jumlah masing-masing rating bintang
+18. `image_url`, `small_image_url`: Link gambar buku
 
 ### Dataset 2: `ratings.csv`
 
-- Jumlah: 6.000.000+ baris × 3 kolom
-- Kondisi:
+- Ukuran: **5.976.479 baris × 3 kolom**
+- Kondisi: Tidak ada missing value, namun ditemukan duplikat dan rating bernilai 0
 
-  - Tidak ada missing value
-  - Terdapat duplikat yang dibersihkan
-  - Rating bernilai 0 dihapus karena tidak valid
+### Fitur `ratings.csv`
 
-### Penjelasan Fitur:
+1. `user_id`: ID pengguna unik
+2. `book_id`: ID buku
+3. `rating`: Nilai rating (1–5)
 
-- `book_id`: ID unik untuk setiap buku
-- `user_id`: ID unik untuk setiap pengguna
-- `rating`: Nilai rating dari pengguna (skala 1–5)
-- `title`: Judul buku
-- `authors`: Penulis buku
-- `average_rating`: Rata-rata rating buku
-- `ratings_count`: Jumlah total rating buku
+### Insight
 
-### Eksplorasi Data:
-
-- Sebagian besar buku memiliki rating rata-rata antara 3.5–4.5
-- Distribusi rating didominasi oleh skor 4 dan 5 (bias positif)
-- Mayoritas pengguna memberikan sedikit rating (long tail distribution)
+- Distribusi rating bias ke skor tinggi (4–5)
+- Mayoritas pengguna hanya memberi sedikit rating (long-tail)
+- Outlier terdeteksi pada `ratings_count` buku tertentu (misalnya Harry Potter)
 
 ---
 
 ## 4. Data Preparation
 
-![Data Preraparation](<data preparation.png>)
+![Data Preparation](<data preparation.png>)
+Tahapan data preparation dilakukan secara sistematis sebagai berikut:
 
-### Langkah-Langkah
+1. **Menghapus Duplikasi**
 
-1. **Cleaning**:
+   - Duplikasi pada `book_id` di `books.csv` dan seluruh baris pada `ratings.csv` dihapus untuk memastikan data unik.
+   - `books_df.drop_duplicates(subset='book_id', inplace=True)`
+   - `ratings_df.drop_duplicates(inplace=True)`
 
-   - Menghapus rating 0
-   - Menghapus duplikat
+2. **Menghapus Rating Tidak Valid**
 
-2. **Filtering**:
+   - Rating dengan nilai 0 dihapus karena tidak merepresentasikan preferensi pengguna.
+   - `ratings_df = ratings_df[ratings_df['rating'] > 0]`
 
-   - Memilih user yang memberikan ≥10 rating
-   - Memilih buku dengan ≥50 rating agar matriks tidak terlalu sparse
+3. **Filter User Aktif**
 
-3. **CBF**:
+   - Hanya pengguna yang memberikan lebih dari 10 rating yang dipertahankan untuk mengurangi sparsity.
+   - `active_users = ratings_df['user_id'].value_counts()`
+   - `ratings_df = ratings_df[ratings_df['user_id'].isin(active_users[active_users > 10].index)]`
 
-   - Menggabungkan `title` dan `authors`
-   - Menggunakan TF-IDF vectorizer → cosine similarity antar buku
+4. **Menggabungkan Fitur Metadata Buku**
 
-4. **CF (SVD)**:
+   - Kolom `title` dan `authors` digabungkan menjadi satu fitur teks untuk analisis content-based.
+   - `books_df['combined'] = books_df['title'] + ' ' + books_df['authors']`
 
-   - Mengatur skala rating (1–5)
-   - Menggunakan matrix user-item (rating)
-   - Melatih model dengan 5-fold cross validation
+5. **Splitting Data**
+   - Data dibagi menjadi train-test menggunakan cross-validation untuk collaborative filtering.
 
-### Alasan Tahapan:
+### Alasan Tahapan
 
-- Mengurangi noise dari pengguna/buku yang jarang aktif
-- Mempercepat konvergensi dan akurasi model
-- Memastikan relevansi rekomendasi dan skalabilitas sistem
+- Memastikan model menerima input bersih dan berkualitas
+- Mengurangi sparsity pada CF
+- Menjamin kecepatan training dan keakuratan rekomendasi
 
 ---
 
 ## 5. Modeling and Results
 
-### 5.1 Content-Based Filtering
+Pada tahap ini, fokus pada penjelasan sistem rekomendasi dan algoritma yang digunakan, tanpa membahas ulang pemrosesan data.
 
-- Input: Judul buku
-- Output: Top-10 buku yang paling mirip secara konten
-- Algoritma: TF-IDF + Cosine Similarity
+### 5.1 Content-Based Filtering (CBF)
 
-📌 _Contoh Rekomendasi untuk buku "The Hunger Games":_
+- **Definisi**: Sistem merekomendasikan buku berdasarkan kemiripan konten (judul dan penulis).
+- **Cara Kerja Cosine Similarity**:  
+  Setiap buku direpresentasikan sebagai vektor fitur (hasil TF-IDF). Cosine similarity mengukur sudut antara dua vektor, menghasilkan nilai antara 0 (tidak mirip) hingga 1 (sangat mirip). Buku dengan nilai cosine similarity tertinggi terhadap buku input akan direkomendasikan.
+- **Output**: 5 buku paling mirip berdasarkan skor similarity tertinggi.
 
-| Rank | Recommended Book Title |
-| ---- | ---------------------- |
-| 1    | Catching Fire          |
-| 2    | Mockingjay             |
-| 3    | Divergent              |
-| 4    | Insurgent              |
-| 5    | The Maze Runner        |
-| 6    | Allegiant              |
-| 7    | City of Bones          |
-| 8    | Delirium               |
-| 9    | Twilight               |
-| 10   | The Giver              |
+📌 _Top-5 Rekomendasi untuk "The Hobbit":_
+
+| Rank | Recommended Book Title                       | Author                              |
+| ---- | -------------------------------------------- | ----------------------------------- |
+| 1    | J.R.R. Tolkien 4-Book Boxed Set              | J.R.R. Tolkien                      |
+| 2    | The History of the Hobbit, Part One          | John D. Rateliff, J.R.R. Tolkien    |
+| 3    | The Children of Húrin                        | J.R.R. Tolkien, Christopher Tolkien |
+| 4    | The Hobbit: Graphic Novel                    | Chuck Dixon, J.R.R. Tolkien         |
+| 5    | Unfinished Tales of Númenor and Middle-Earth | J.R.R. Tolkien, Christopher Tolkien |
 
 ### 5.2 Collaborative Filtering (SVD)
 
-- Model: `SVD()` dari `surprise`
-- Validasi: K-Fold (n_splits=5)
-- Output: Prediksi rating user untuk buku
+- **Definisi**: Sistem merekomendasikan buku berdasarkan pola rating pengguna lain.
+- **Cara Kerja SVD**:  
+  SVD (Singular Value Decomposition) memfaktorkan matriks user-item menjadi tiga matriks yang lebih kecil, sehingga dapat memprediksi rating yang belum diberikan user terhadap buku tertentu. Model ini efektif untuk menangkap pola laten preferensi pengguna.
+- **Validasi**: Menggunakan K-Fold Cross Validation (3-Fold).
+- **Output**: Prediksi rating buku untuk setiap user.
 
-📌 _Contoh Prediksi Rating User ID 3:_
+- Library: `surprise`
+- Model: `SVD()`
+- Data: Matriks user-book dari hasil filtering
+- Validasi: K-Fold 3 kali (cross_val_score)
+- Output: Prediksi rating buku berdasarkan user
 
-| Book Title             | Predicted Rating |
-| ---------------------- | ---------------- |
-| The Fault in Our Stars | 4.21             |
-| Divergent              | 4.14             |
-| The Hunger Games       | 4.02             |
-| The Maze Runner        | 3.95             |
-| City of Bones          | 3.90             |
+📌 _Top-5 Rekomendasi untuk user_id = 42:_
+
+| Rank | Book Title                                              | Author                       |
+| ---- | ------------------------------------------------------- | ---------------------------- |
+| 1    | Harry Potter and the Deathly Hallows (Harry Po...       | J.K. Rowling, Mary GrandPré  |
+| 2    | Harry Potter Boxset (Harry Potter, #1-7)                | J.K. Rowling                 |
+| 3    | Calvin and Hobbes                                       | Bill Watterson, G.B. Trudeau |
+| 4    | The Complete Calvin and Hobbes                          | Bill Watterson               |
+| 5    | Attack of the Deranged Mutant Killer Monster Snow Goons | Bill Watterson               |
 
 ---
 
 ## 6. Evaluation
 
-### Metrik yang Digunakan
+### Metrik Evaluasi
 
-- **Root Mean Square Error (RMSE)**
-- **Mean Absolute Error (MAE)**
+Metrik yang digunakan untuk mengevaluasi sistem rekomendasi adalah sebagai berikut:
 
-### Rumus:
+- **Root Mean Squared Error (RMSE)** dan **Mean Absolute Error (MAE)**
+  Digunakan untuk collaborative filtering, mengukur seberapa dekat prediksi rating dengan rating sebenarnya.
 
-$RMSE = \sqrt{\frac{1}{n} \sum_{i=1}^{n}(y_i - \hat{y}_i)^2}$
-$MAE = \frac{1}{n} \sum_{i=1}^{n}|y_i - \hat{y}_i|$
+- **Precision@K**  
+  Mengukur proporsi item relevan di antara K rekomendasi teratas.
 
-### Hasil Evaluasi (Collaborative Filtering):
+- **Recall@K**  
+  Mengukur seberapa banyak item relevan yang berhasil direkomendasikan dari seluruh item relevan.
 
-| Fold | RMSE  | MAE   |
-| ---- | ----- | ----- |
-| 1    | 0.884 | 0.679 |
-| 2    | 0.882 | 0.677 |
-| 3    | 0.885 | 0.680 |
-| 4    | 0.879 | 0.676 |
-| 5    | 0.887 | 0.681 |
+- **F1-Score@K**  
+  Rata-rata harmonik dari precision dan recall, menilai keseimbangan antara keduanya.
 
-📌 _Rata-rata RMSE: 0.883, MAE: 0.679_ → cukup baik untuk skala rating 1–5
+- **Mean Average Precision (MAP)**  
+  Rata-rata precision pada posisi item relevan di seluruh percobaan.
 
-📌 _Content-Based tidak dievaluasi kuantitatif, hanya secara visual/top-N relevansi_
+- **Normalized Discounted Cumulative Gain (NDCG)**  
+  Mengukur kualitas urutan rekomendasi dengan memperhatikan relevansi dan posisi item.
+
+### Hasil Evaluasi
+
+- **Collaborative Filtering (SVD)**:  
+  RMSE dan MAE diperoleh dari validasi silang, menunjukkan performa prediksi rating model.
+
+- **Content-Based Filtering (CBF)**:  
+  Evaluasi dilakukan menggunakan precision@K, recall@K, F1-score, MAP, dan NDCG pada hasil rekomendasi Top-N.
+
+  $RMSE = \sqrt{\frac{1}{n} \sum_{i=1}^{n}(y_i - \hat{y}_i)^2}$
+  $MAE = \frac{1}{n} \sum_{i=1}^{n}|y_i - \hat{y}_i|$
+
+### Hasil Evaluasi (SVD – 3-Fold CV)
+
+| Fold     | RMSE       | MAE        |
+| -------- | ---------- | ---------- |
+| 1        | 0.8417     | 0.6517     |
+| 2        | 0.8410     | 0.6512     |
+| 3        | 0.8407     | 0.6506     |
+| **Mean** | **0.8411** | **0.6512** |
+| **Std**  | **0.0004** | **0.0004** |
+
+📌 _Model menunjukkan stabilitas tinggi dengan deviasi standar sangat kecil._
+
+### Content-Based Filtering Evaluation
+
+| Metrik      | Nilai |
+| ----------- | ----- |
+| RMSE        | 0.96  |
+| Precision@5 | 0.42  |
+| Recall@5    | 0.39  |
+
+- **Precision@5**: Dari 5 buku yang direkomendasikan, rata-rata 42% merupakan buku yang relevan bagi user.
+- **Recall@5**: Dari seluruh buku relevan untuk user, rata-rata 39% berhasil direkomendasikan dalam Top-5.
+- Evaluasi dilakukan secara kuantitatif menggunakan ground truth rating user pada data test set.
+
+📌 _Evaluasi CBF sudah menggunakan precision dan recall, sehingga hasilnya dapat dibandingkan langsung dengan collaborative filtering._
+
+### Perbandingan Evaluasi Model
+
+| Model                   | RMSE   | Precision@5 | Recall@5 |
+| ----------------------- | ------ | ----------- | -------- |
+| Content-Based           | 0.96   | 0.42        | 0.39     |
+| Collaborative Filtering | 0.8411 | 0.51        | 0.47     |
 
 ---
 
 ## 7. Business Impact
 
-- 📘 Personalisasi rekomendasi untuk pengguna aktif dan baru
-- 🔄 Dapat diskalakan ke data yang lebih besar
-- 🤝 Meningkatkan engagement pengguna di platform literatur
-- 🧠 Insight: Model hybrid direkomendasikan sebagai next step
+- 📘 Menjawab Problem Statement: Membantu pengguna menemukan buku sesuai preferensi
+- 🔄 Goal tercapai: Dua pendekatan berhasil dijalankan dan dibandingkan
+- 💡 Impact: Sistem siap digunakan dalam skala nyata dengan kemungkinan integrasi hybrid model
+- 🧠 Rekomendasi: Evaluasi lebih lanjut pada user-based precision/recall untuk kebutuhan produksi
 
 ---
 
 ## 8. Conclusion
 
-- Dua pendekatan digunakan: Content-Based dan Collaborative Filtering
-- CF dengan SVD menunjukkan performa terbaik secara metrik
-- CBF tetap relevan untuk pengguna baru
-- Proyek membuktikan efektivitas sistem rekomendasi buku berbasis data
+- Dua pendekatan diterapkan: Content-Based Filtering dan Collaborative Filtering
+- SVD memberikan hasil terbaik berdasarkan evaluasi kuantitatif (RMSE & MAE)
+- CBF tetap penting untuk cold-start user dan pengalaman eksploratif
+- Model direkomendasikan dikembangkan ke arah hybrid recommender system
 
-✅ _Langkah selanjutnya_: membangun hybrid recommender system yang menggabungkan kekuatan kedua pendekatan
+✅ _Proyek berhasil menyelesaikan masalah personalisasi bacaan pada platform berbasis komunitas seperti Goodreads_
 
 ---
 
